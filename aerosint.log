@@ -1,0 +1,3 @@
+[31;20m[2025-04-02 12:49:40,021]    ERROR: Timeout waiting state NanotecDriverState.SWITCH_ON_DISABLED[0m
+[31;20m[2025-04-02 12:49:40,021]    ERROR: Could not initialize Nanotec driver: [INTERNAL SERVER ERROR] Timeout waiting state NanotecDriverState.SWITCH_ON_DISABLED[0m
+[31;20m[2025-04-02 12:49:40,021]    ERROR: Impossible to perform Nanotec motion from state NanotecDriverState.READY_TO_SWITCH_ON[0m
