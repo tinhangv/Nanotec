@@ -1,6 +1,10 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from pymodbus.client import ModbusTcpClient
 import time
-from read_nanotec import read_nanotec
+
+app = Flask(__name__)
+CORS(app)  # Allow React to talk to Flask
 
 # --- Modbus Register Addresses ---
 PDI_SETVALUE1_ADDR = 5996   # Target Position (32-bit)
@@ -11,7 +15,30 @@ PDI_STATUS_ADDR    = 4996   # PDI-Status
 PDI_RETURN_ADDR    = 4998   # PDI-ReturnValue (Position Feedback) 32-bit
 PDI_ERROR_ADDR     = 4997   # Error code
 
-def profile_position_abs(target_position,max_speed):
+def your_function(target_position, max_speed):
+    print(f"🎯 Python function ran with target_position={target_position}, max_speed={max_speed}")
+    # Set the IP address and port of your Nanotec controller
+    ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
+    port = 502  # Default Modbus TCP port
+
+    # Create a Modbus TCP client
+    client = ModbusTcpClient(ip_address, port=port)
+
+    # Connect to the client
+    client.connect()
+
+    profile_position_abs(target_position, max_speed, client)
+
+    wait_for_target_reached(client)
+    # send NOP command to PDI-Cmd
+    client.write_register(5999, 0)
+    time.sleep(0.05)  # Short delay just to allow internal processing
+    # send switch off command to PDI-Cmd
+    client.write_register(5999, 1)
+
+    client.close()
+
+def profile_position_abs(target_position, max_speed, client: ModbusTcpClient) -> None:
     """ target_position in 0.1 degree, max_speed in rpm """
     # write target position to PDI-SetValue1
     client.write_register(PDI_SETVALUE1_ADDR, target_position >> 16)  # High byte
@@ -46,29 +73,13 @@ def wait_for_target_reached(client: ModbusTcpClient) -> None:
             break
         time.sleep(0.2)
 
-if __name__ == "__main__":
-    # Set the IP address and port of your Nanotec controller
-    ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
-    port = 502  # Default Modbus TCP port
+@app.route('/run_function', methods=['POST'])
+def run_function():
+    data = request.get_json()
+    target_position = int(data.get('position', 0))  # Default to 0 if not provided
+    max_speed = int(data.get('speed', 0))  # Default to 0 if not provided
+    your_function(target_position, max_speed)
+    return jsonify({'status': 'Function executed successfully'})
 
-    # Create a Modbus TCP client
-    client = ModbusTcpClient(ip_address, port=port)
-
-    # Connect to the client
-    client.connect()
-
-    max_speed = 25  # Set your desired max speed here (rpm)
-    target_position = 0 # Set your desired target position here (0.1deg)
-    profile_position_abs(target_position,max_speed)
-
-    wait_for_target_reached(client)
-    # send NOP command to PDI-Cmd
-    client.write_register(5999, 0)
-    time.sleep(0.05)  # Short delay just to allow internal processing
-    # send switch off command to PDI-Cmd
-    client.write_register(5999, 1)
-
-    client.close()
-
-    # Read and print the Nanotec registers
-    read_nanotec()
+if __name__ == '__main__':
+    app.run(port=5000, debug=True)
