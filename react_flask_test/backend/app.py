@@ -15,8 +15,12 @@ PDI_STATUS_ADDR    = 4996   # PDI-Status
 PDI_RETURN_ADDR    = 4998   # PDI-ReturnValue (Position Feedback) 32-bit
 PDI_ERROR_ADDR     = 4997   # Error code
 
-def your_function(target_position, max_speed):
-    print(f"🎯 Python function ran with target_position={target_position}, max_speed={max_speed}")
+motor_status = "idle"  # Initialize motor status
+
+def move_absolute(target_position, max_speed):
+    global motor_status
+    motor_status = "moving"
+    
     # Set the IP address and port of your Nanotec controller
     ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
     port = 502  # Default Modbus TCP port
@@ -29,7 +33,11 @@ def your_function(target_position, max_speed):
 
     profile_position_abs(target_position, max_speed, client)
 
-    wait_for_target_reached(client)
+    result = wait_for_target_reached(client)
+    if result == "target_reached":
+        motor_status = "done"
+    elif result.startswith("fault"):
+        motor_status = "fault"
     # send NOP command to PDI-Cmd
     client.write_register(5999, 0)
     time.sleep(0.05)  # Short delay just to allow internal processing
@@ -37,6 +45,7 @@ def your_function(target_position, max_speed):
     client.write_register(5999, 1)
 
     client.close()
+    return result
 
 def profile_position_abs(target_position, max_speed, client: ModbusTcpClient) -> None:
     """ target_position in 0.1 degree, max_speed in rpm """
@@ -65,12 +74,12 @@ def wait_for_target_reached(client: ModbusTcpClient) -> None:
         status = client.read_input_registers(address=PDI_STATUS_ADDR, count=1).registers[0]
         if status & (1 << 3):  # Bit 3 = PdiStatusTargetReached
             print("Target position reached.")
-            break
+            return "target_reached"
         elif status & (1 << 2):  # Bit 2 = PdiStatusFault
             print("Fault occurred during move!")
             error = client.read_input_registers(address=PDI_ERROR_ADDR, count=1).registers[0]
             print(f"Error code: {hex(error)}")
-            break
+            return f"fault: {hex(error)}"
         time.sleep(0.2)
 
 @app.route('/run_function', methods=['POST'])
@@ -78,8 +87,12 @@ def run_function():
     data = request.get_json()
     target_position = int(data.get('position', 0))  # Default to 0 if not provided
     max_speed = int(data.get('speed', 0))  # Default to 0 if not provided
-    your_function(target_position, max_speed)
+    move_absolute(target_position, max_speed)
     return jsonify({'status': 'Function executed successfully'})
+
+@app.route('/motor_status', methods=['GET'])
+def get_motor_status():
+    return jsonify({'status': motor_status})
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)

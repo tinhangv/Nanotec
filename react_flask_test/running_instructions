@@ -1,0 +1,14 @@
+Terminal 1:
+venv\Scripts\activate
+cd backend
+python app.py
+
+Terminal 2:
+cd frontend
+npm start
+
+
+or use start_app.bat
+
+
+
