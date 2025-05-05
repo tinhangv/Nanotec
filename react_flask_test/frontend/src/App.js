@@ -6,11 +6,17 @@ function App() {
     const [speed, setSpeed] = useState('');
     const [status, setStatus] = useState('idle');
 
-    const handleClick = () => {
-        axios.post('http://localhost:5000/run_function', { position, speed })
+    const handleMove = () => {
+        axios.post('http://localhost:5000/run_positioning_movement', { position, speed })
             .then(() => setStatus("moving"))
             .catch(() => setStatus("error"));
     };
+
+    const handleStop = () => {
+        axios.post('http://localhost:5000/quickstop')
+            .then(() => setStatus("stopped"))
+            .catch(() => setStatus("error"));
+    }
 
     // Poll every second
     useEffect(() => {
@@ -27,16 +33,18 @@ function App() {
             <h1>Nanotec Motor Control</h1>
             <p><strong>Status:</strong> {status}</p>
             <label>
-                Target Position:
+                Target Position (*0.1deg):
                 <input value={position} onChange={e => setPosition(e.target.value)} />
             </label>
             <br />
             <label>
-                Speed:
+                Speed (rpm): 
                 <input value={speed} onChange={e => setSpeed(e.target.value)} />
             </label>
             <br />
-            <button onClick={handleClick}>Start Move</button>
+            <button onClick={handleMove}>Start Move</button>
+            <button onClick={handleStop} 
+            style={{ backgroundColor: 'red', color: 'white' }}> Emergency Stop</button>
         </div>
     );
 }

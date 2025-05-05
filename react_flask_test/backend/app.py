@@ -6,6 +6,9 @@ import time
 app = Flask(__name__)
 CORS(app)  # Allow React to talk to Flask
 
+ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
+port = 502  # Default Modbus TCP port
+
 # --- Modbus Register Addresses ---
 PDI_SETVALUE1_ADDR = 5996   # Target Position (32-bit)
 PDI_SETVALUE2_ADDR = 5998   # Max Speed (16-bit)
@@ -21,10 +24,6 @@ def move_absolute(target_position, max_speed):
     global motor_status
     motor_status = "moving"
     
-    # Set the IP address and port of your Nanotec controller
-    ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
-    port = 502  # Default Modbus TCP port
-
     # Create a Modbus TCP client
     client = ModbusTcpClient(ip_address, port=port)
 
@@ -82,8 +81,20 @@ def wait_for_target_reached(client: ModbusTcpClient) -> None:
             return f"fault: {hex(error)}"
         time.sleep(0.2)
 
-@app.route('/run_function', methods=['POST'])
-def run_function():
+@app.route('/quickstop', methods=['POST'])
+def quickstop() -> None:
+    """Send a quick stop command to the motor."""
+    global motor_status
+    client = ModbusTcpClient(ip_address, port=port)
+    client.connect()
+    client.write_register(PDI_CMD_ADDR, 3)  # Quick stop command
+    print("Quick stop command sent.")
+    client.close()
+    motor_status = "stopped"  # <-- mark it stopped!
+    return jsonify({'status': 'Motor quick-stopped'})
+
+@app.route('/run_positioning_movement', methods=['POST'])
+def run_positioning_movement():
     data = request.get_json()
     target_position = int(data.get('position', 0))  # Default to 0 if not provided
     max_speed = int(data.get('speed', 0))  # Default to 0 if not provided
