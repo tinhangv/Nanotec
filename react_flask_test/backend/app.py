@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymodbus.client import ModbusTcpClient
+from threading import Thread, Lock
 import time
 
 app = Flask(__name__)
@@ -19,36 +20,47 @@ PDI_RETURN_ADDR    = 4998   # PDI-ReturnValue (Position Feedback) 32-bit
 PDI_ERROR_ADDR     = 4997   # Error code
 
 motor_status = "idle"  # Initialize motor status
+stop_requested = False
+modbus_lock = Lock()
 
-def move_absolute(target_position, max_speed):
-    global motor_status
+def move(target_position, max_speed, movement_type: str) -> None:
+    global motor_status, stop_requested
+
     motor_status = "moving"
-    
-    # Create a Modbus TCP client
     client = ModbusTcpClient(ip_address, port=port)
-
-    # Connect to the client
     client.connect()
 
-    profile_position_abs(target_position, max_speed, client)
+    with modbus_lock:
+        if movement_type == "relative":
+            profile_position(target_position, max_speed, "relative", client)
+        elif movement_type == "absolute":
+            profile_position(target_position, max_speed, "absolute", client)
+        else:
+            print("Invalid movement type. Use 'absolute' or 'relative'.")
+            client.close()
+            return
 
     result = wait_for_target_reached(client)
+
+    with modbus_lock:
+        # Send NOP before stop or switch-off
+        client.write_register(PDI_CMD_ADDR, 0)
+        time.sleep(0.05)
+        client.write_register(PDI_CMD_ADDR, 1)  # Switch off
+
+    client.close()
+
     if result == "target_reached":
         motor_status = "done"
     elif result.startswith("fault"):
         motor_status = "fault"
-    # send NOP command to PDI-Cmd
-    client.write_register(5999, 0)
-    time.sleep(0.05)  # Short delay just to allow internal processing
-    # send switch off command to PDI-Cmd
-    client.write_register(5999, 1)
+    elif result == "aborted":
+        motor_status = "stopped"
 
-    client.close()
-    return result
-
-def profile_position_abs(target_position, max_speed, client: ModbusTcpClient) -> None:
+def profile_position(target_position, max_speed, movement_type: str, client: ModbusTcpClient) -> None:
     """ target_position in 0.1 degree, max_speed in rpm """
     # write target position to PDI-SetValue1
+    target_position &= 0xFFFFFFFF  # Ensure it's a 32-bit value
     client.write_register(PDI_SETVALUE1_ADDR, target_position >> 16)  # High byte
     client.write_register(PDI_SETVALUE1_ADDR+1, target_position & 0xFFFF)  # Low byte
 
@@ -61,45 +73,73 @@ def profile_position_abs(target_position, max_speed, client: ModbusTcpClient) ->
     time.sleep(0.05)  # Short delay just to allow internal processing
 
     # send move command to PDI-Cmd
-    client.write_register(PDI_CMD_ADDR, 20)
+    if movement_type == "absolute":
+        client.write_register(PDI_CMD_ADDR, 20)
+    elif movement_type == "relative":
+        client.write_register(PDI_CMD_ADDR, 21)
+
     print("Move command sent.")
 
     time.sleep(0.05)  # Short delay just to allow internal processing
     
-
-def wait_for_target_reached(client: ModbusTcpClient) -> None:
-    """Wait until the motor reaches the target position."""
+def wait_for_target_reached(client: ModbusTcpClient) -> str:
+    global stop_requested
     while True:
-        status = client.read_input_registers(address=PDI_STATUS_ADDR, count=1).registers[0]
-        if status & (1 << 3):  # Bit 3 = PdiStatusTargetReached
-            print("Target position reached.")
+        if stop_requested:
+            print("❗ Movement aborted due to quick stop.")
+            stop_requested = False
+            return "aborted"
+
+        with modbus_lock:
+            status = client.read_input_registers(address=PDI_STATUS_ADDR, count=1).registers[0]
+
+        if status & (1 << 3):
+            print("✅ Target position reached.")
             return "target_reached"
-        elif status & (1 << 2):  # Bit 2 = PdiStatusFault
-            print("Fault occurred during move!")
+        elif status & (1 << 2):
+            print("❌ Fault during move!")
             error = client.read_input_registers(address=PDI_ERROR_ADDR, count=1).registers[0]
             print(f"Error code: {hex(error)}")
             return f"fault: {hex(error)}"
         time.sleep(0.2)
 
 @app.route('/quickstop', methods=['POST'])
-def quickstop() -> None:
-    """Send a quick stop command to the motor."""
-    global motor_status
+def quickstop():
+    global motor_status, stop_requested
+    stop_requested = True
+
     client = ModbusTcpClient(ip_address, port=port)
     client.connect()
-    client.write_register(PDI_CMD_ADDR, 3)  # Quick stop command
-    print("Quick stop command sent.")
-    client.close()
-    motor_status = "stopped"  # <-- mark it stopped!
-    return jsonify({'status': 'Motor quick-stopped'})
 
-@app.route('/run_positioning_movement', methods=['POST'])
-def run_positioning_movement():
+    with modbus_lock:
+        client.write_register(PDI_CMD_ADDR, 0)
+        time.sleep(0.05)
+        client.write_register(PDI_CMD_ADDR, 3)  # Quick stop
+    motor_status = "stopped"
+    client.close()
+
+    return jsonify({'status': 'Emergency stop sent'})
+
+@app.route('/run_abs_movement', methods=['POST'])
+def run_abs_movement():
     data = request.get_json()
     target_position = int(data.get('position', 0))  # Default to 0 if not provided
     max_speed = int(data.get('speed', 0))  # Default to 0 if not provided
-    move_absolute(target_position, max_speed)
-    return jsonify({'status': 'Function executed successfully'})
+
+    Thread(target=move, args=(target_position, max_speed, "absolute")).start()
+
+    return jsonify({'status': 'Absolute Movement Started'})
+
+
+@app.route('/run_rel_movement', methods=['POST'])
+def run_rel_movement():
+    data = request.get_json()
+    target_position = int(data.get('position', 0))  # Default to 0 if not provided
+    max_speed = int(data.get('speed', 0))  # Default to 0 if not provided
+
+    Thread(target=move, args=(target_position, max_speed, "relative")).start()
+
+    return jsonify({'status': 'Relative Movement Started'})
 
 @app.route('/motor_status', methods=['GET'])
 def get_motor_status():
