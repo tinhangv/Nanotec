@@ -7,7 +7,7 @@ import time
 app = Flask(__name__)
 CORS(app)  # Allow React to talk to Flask
 
-ip_address = '10.10.192.90'  # Replace with your Nanotec controller's IP
+ip_address = '10.10.192.80'  # Replace with your Nanotec controller's IP
 port = 502  # Default Modbus TCP port
 
 # --- Modbus Register Addresses ---

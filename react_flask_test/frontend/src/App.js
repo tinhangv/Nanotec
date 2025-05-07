@@ -3,7 +3,7 @@ import axios from 'axios';
 
 function App() {
     const [position, setPosition] = useState('');
-    const [speed, setSpeed] = useState('');
+    const [speed, setSpeed] = useState('25');
     const [status, setStatus] = useState('idle');
 
     const handleAbsMove = () => {
